@@ -1,163 +1,220 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include <sys/wait.h>
+#include <stdlib.h>
 
-
-int verifFile(struct dirent *file) {
-    char* a = file->d_name;  //se parcurge fiesierul
-    if((file->d_name[strlen(file->d_name)-1] == 'c') && (file->d_name[strlen(file->d_name) - 2] == '.')) //pune pe ultima pozitie litera 'c' si penultima pozitie punctul care formeaza extensia .c
-    return 1; 
+int verificareFisier(struct dirent * fisier){
+   
+	//verificam daca ultimele 2 caractere sunt .c reprezentand extensia si returnam 1 daca e adv
+    if((fisier->d_name[strlen(fisier->d_name)-1] == 'c') && (fisier->d_name[strlen(fisier->d_name) - 2] == '.')) 
+        return 1;
     else return 0;
 }
 
-int main(int argc, char *argv[]) {
-
+int main(int argc, char *argv[])
+{
     DIR *dir;             
-    struct stat st1;      
-    struct dirent *file;  
-    char aux[10];         //se declara datele
+    struct stat st1;    
+    struct dirent *fisier;  
+    char aux[10];        
     int length = 0;       
-    int cnt = 1;          
-    char path[100];       
-    char path2[100];      
+    int contor = 1;          
+    char path1[100];
+    char path2[100];
+    int p_op;
+    int pfd1[2],pfd2[2]; 
+    int pid, status;
+    int pid1,pid2,pid3;
 
-     if (argc != 3) {
-            printf("Usage: ./executable <director> <optiuni>\n"); 
+    if (argc != 3)  //verificam numarul argumentelor
+        {
+            printf("Usage: ./executabil <director> <optiuni>\n"); 
             return 0;
         }
 
-    dir = opendir(argv[1]);                                 // se deschide
-    if (dir == NULL ) 
-       printf("error open file!\n"); //   fisier
+    dir = opendir(argv[1]); //deschidem directorul, adica al doilea argument                           
+    if (dir == NULL )  //daca este gol atunci afisam un mesaj de eroare
+      printf("Eroare deschidere.\n");
 
-    while((file = readdir(dir)) && (file != NULL)) 
-      {
-       if(verifFile(file))        // daca e fisier .c se prelucreaza conform cerintei
+    /*
+    vechea citire din fisier care lua un singur fisier
+    fisier = readdir(dir);                                     
+    if(fisier == NULL)
+       printf("Erore parcurgere fisier!\n");
+    */
+ 
+    //noua citire din fisier
+	//citim in while si cat timp nu este gol il verificam daca este fisier .c
+    while((fisier = readdir(dir)) && (fisier != NULL))
+     {
+       if(verificareFisier(fisier)) //daca este fisier .c putem parcurge optiunile    
         {
-          int pid, status;
-          length = strlen(argv[2])-1;
-          cnt = 1;
-          strcpy(aux,argv[2]);   // parcurgem sirul "-nu..."
-          strcpy(path,argv[1]);
-	        strcat(path,"/");
-		      strcat(path,file->d_name);
+          length = strlen(argv[2]) - 1; //lungimea sirului
+          contor = 1; //contorul, numarul de optiuni
 
-          if (strchr(argv[2], 'p') != NULL ) {
-            strcpy(path2, path);
-            path2[strlen(path2) - 2] = '\0';
-            char buff[4096];
-            int nr_warnings=0,nr_errors=0;
-            FILE *stream=fopen(path,"r");
-            while((fgets(buff,4096,stream)) != NULL){
-                if(strstr(buff,"error") != NULL)
-                    nr_errors++;
-                if(strstr(buff,"warning") != NULL)
-                    nr_warnings++;
+          //parcurgem sirul de optiuni, al treilea argument 
+          strcpy(aux,argv[2]);  //copiem sirul intr-un vector
+          strcpy(path1,argv[1]); //copiem arg cu directorul in path1
+          strcat(path1,"/"); //concatenam "/"
+          strcat(path1,fisier->d_name); //adaugam numele fisierului
+
+
+          
+          if (strchr (argv[2], 'p') != NULL) //daca optiunea este p se creaza pipe
+          {
+            p_op = 1;
+            if (pipe(pfd1) < 0)
+            {
+              perror( "Eroare la crearea pipe-ului\n");
+              exit(1);
             }
-            int nota = 10;
-            if(nr_errors >= 1)    //avem erori
-                nota = 1;
-            else{
-                //nu avem erori
-                if(nr_warnings > 10)
-                    nota = 2;
-                else{
-                    nota = 2 + 8*(10 - nr_warnings)/10;
-                }
+            if (pipe(pfd2) < 0)
+            {
+              perror( "Eroare la crearea pipe-ului\n");
+              exit(1);
             }
-            printf("%40s:    nota %d\n", file->d_name, nota);
-            pid = wait(&status);
-            printf("Procesul cu PID <%d> s-a terminat cu codul <%d>.\n", pid, WEXITSTATUS(status));
+            
           }
-          if (strchr(argv[2], 'g') != NULL) {
-            if (pid = fork() == 0){
-              strcpy(path2, path);
+
+        //fiul 1 cu gcc;compilare
+          if (strchr(argv[2], 'g') != NULL) //pentru varianta -g folosim gcc pentru a compila fisierul .c
+          {
+            
+            pid=fork();
+
+            if (pid == 0) //procesul pentru optiunea -g
+            {
+               if(p_op)
+              {
+                dup2(pfd1[1],2); //duplicarea descriptorului 2, returnand noul descriptor
+                close(pfd1[0]); //inchid capatul de citire
+                close(pfd1[1]); //inchid capatul de scriere
+              }
               path2[strlen(path2) - 2] = '\0';
-              execlp("gcc", "gcc", "-o", path2, path, NULL);
+              execlp("gcc", "gcc", "-o", path2, path1, NULL); //executam gcc
               exit(0);
             }
-            pid = wait(&status);
+            wait(&status); //asteapta statusul
             printf("Procesul cu PID <%d> s-a terminat cu codul <%d>.\n", pid, WEXITSTATUS(status));
           }
-          pid = fork();
-      if (pid == 0)
-      {
-        length = strlen(argv[2]) - 1;
-        cnt = 1;
-          
-        while(length>0) {
-          //if (stat(path, &st1) == 0) {
-                switch (aux[cnt]) {
-                    case 'n': printf("name_file: %s\n",file->d_name);
-                              break;
 
-                    case 'u': if(stat(path,&st1) == 0)
+        //fiul 2 cu filtrarea erorilor
+          if(p_op)
+          {
+            if ((pid3 = fork()) < 0)
+            {
+              perror( "Eroare la fork");
+              exit(1);
+            }
+
+            if(pid3 == 0)
+            {
+              dup2(pfd1[0],0); //duplicarea descriptorului 0, returnand noul descriptor
+              dup2(pfd2[1],1); //duplicarea descriptorului 1, returnand noul descriptor
+              close(pfd1[1]); //inchid capatul de scriere
+              close(pfd2[0]); //inchid capatul de citire
+              execlp("egrep","egrep","(error)|(warning)",NULL); //execut grep
+              exit(0);
+            }
+          } 
+
+          if ((pid1 = fork()) < 0)
+            {
+              perror( "Eroare la fork");
+              exit(1);
+            }
+          if (pid1 == 0) //procesul pentru switch, celelalte optiuni din sir
+          {
+            length = strlen(argv[2]) - 1;
+            contor = 1;
+
+          while(length>0) //cat timp exista optiuni in sir
+           {
+            if(stat(path1,&st1) == 0)
+            {
+             switch (aux[contor]) 
+                {
+
+                  //numele fisierului
+                  case 'n': printf("Nume: %s\n",fisier->d_name);
+                            break;
+
+                  //utilizatorul fisierului
+                  case 'u':
+                             if(stat(path1,&st1) == 0)
                              {
                                printf("Utilizator: %d\n",st1.st_uid);
                              }
                             break;
 
-                    case 'a': printf("user:\n Read - %s\n", st1.st_mode & S_IRUSR ? "Da" : "NU");
-                              printf("Write - %s\n", st1.st_mode & S_IWUSR ? "Da" : "NU");
-                              printf("Write - %s\n", st1.st_mode & S_IWUSR ? "Da" : "NU");
-                              printf("Execute - %s\n", st1.st_mode & S_IXUSR ? "Da" : "NU");
+                  //drepturile de permisiune
+                  case 'a': printf("Utilizator:\nRead - %s\n", st1.st_mode & S_IRUSR ? "DA" : "NU");
+                            printf("Write - %s\n", st1.st_mode & S_IWUSR ? "DA" : "NU");
+                            printf("Write - %s\n", st1.st_mode & S_IWUSR ? "DA" : "NU");
+                            printf("Execute - %s\n", st1.st_mode & S_IXUSR ? "DA" : "NU");
 
-                              printf("grup:\nRead - %s\n", st1.st_mode & S_IRUSR ? "Da" : "NU");
-                              printf("Write - %s\n", st1.st_mode & S_IWGRP ? "Da" : "NU");
-                              printf("Write - %s\n", st1.st_mode & S_IWGRP ? "Da" : "NU");
-                              printf("Execute - %s\n", st1.st_mode & S_IXGRP ? "Da" : "NU");
+                            printf("Grup:\nRead - %s\n", st1.st_mode & S_IRUSR ? "DA" : "NU");
+                            printf("Write - %s\n", st1.st_mode & S_IWGRP ? "DA" : "NU");
+                            printf("Write - %s\n", st1.st_mode & S_IWGRP ? "DA" : "NU");
+                            printf("Execute - %s\n", st1.st_mode & S_IXGRP ? "DA" : "NU");
 
-                              printf("others:\nRead - %s\n", st1.st_mode & S_IRUSR ? "Da" : "NU");
-                              printf("Write - %s\n", st1.st_mode & S_IWOTH ? "Da" : "NU");
-                              printf("Write - %s\n", st1.st_mode & S_IWOTH ? "Da" : "NU");
-                              printf("Execute - %s\n", st1.st_mode & S_IXOTH ? "Da" : "NU");
-                            break;                 
+                            printf("Altii:\nRead - %s\n", st1.st_mode & S_IRUSR ? "DA" : "NU");
+                            printf("Write - %s\n", st1.st_mode & S_IWOTH ? "DA" : "NU");
+                            printf("Write - %s\n", st1.st_mode & S_IWOTH ? "DA" : "NU");
+                            printf("Execute - %s\n", st1.st_mode & S_IXOTH ? "DA" : "NU");
+                            break;
 
-                    case 'd': if(stat(path,&st1) == 0)
+                  //dimensiunea in octeti a fisierului folosind stat
+                  case 'd': if(stat(path1,&st1) == 0)
                              {
                                printf("Dimensiune in octeti: %ld\n",st1.st_size);
                              }
                              break;
 
-                    case 'c': if(stat(path,&st1) == 0)
+                  //numarul de legaturi ale fisierului folosind stat
+                  case 'c': if(stat(path1,&st1) == 0)
                              {
                                printf("Numarul de legaturi: %lu\n",st1.st_nlink);
                              }
                             break;
-                    }
-        
-                length--;
-                cnt++;
-
-              }
-              exit(0);
-      }
-      wait(&status);
-      printf("Procesul cu PID <%d> s-a terminat cu codul <%d>.\n", pid, WEXITSTATUS(status));
-
-      pid = fork();
-      if (pid == 0) {
-
                   
-                  if (st1.st_size < 1024 * 100) {
-                    strcpy(path2, path);
-                    path2[strlen(path2)-2] = '\0';
-                    unlink(path2);
-                    symlink(path, path2);
-                  }
-                exit(0);
-      }
-      wait(&status);
-      printf("Procesul cu PID <%d> s-a terminat cu codul <%d>.\n", pid, WEXITSTATUS(status));
+                }
+            }else printf("eroare");
+            length--; //lungimea sirului scade
+            contor++; //creste contorul practic pozitia din vectorul de optiuni
+          }
+          exit(0);
+          }
+          wait(&status); //asteapta statusul
+          printf("Procesul cu PID <%d> s-a terminat cu codul <%d>.\n", pid1, WEXITSTATUS(status));
+
+      if ((pid2 = fork()) < 0) //crearea procesului pentru legaturi
+            {
+              perror( "Eroare la fork");
+              exit(1);
+            } 
+      if(pid2 == 0) //procesul pentru legaturi
+      {
+        if (st1.st_size < 1024 * 100) //daca dimensiunea e mai mica decat 1024 KB atunci cream o legatura noua
+        {
+           strcpy(path2, path1);
+           path2[strlen(path2) - 2] = '\0';
+           unlink(path2);
+           symlink(path1,path2);
         }
-        //file = readdir(dir);
-        }  
-    
-  return 0;
+        exit(0);
+      }
+      wait(&status); //asteapta statusul
+      printf("Procesul cu PID <%d> s-a terminat cu codul <%d>.\n", pid2, WEXITSTATUS(status));
+
+    }
+
+    }
+    return 0;
 }
